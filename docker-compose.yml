@@ -1,0 +1,41 @@
+# Same hosting pattern as the rest of this repo's sites (sable, ai-company,
+# halo4, ...): shared Traefik reverse proxy on the external `traefik-proxy`
+# network, TLS via the `letsencrypt` certresolver, running on the shared
+# Hostinger VPS (halovisionai.cloud).
+#
+# Also exposes a direct host port (47850, unique across every site in this
+# repo — see the port survey in DEPLOY.md) so it's reachable at
+# http://<VPS_IP>:47850 even before/without DNS or Traefik, matching how
+# n8n/ai-company keep a fallback direct port alongside their Traefik labels.
+# It's a static marketing page with nothing to steal — no auth needed on
+# either path.
+#   https://guardian.halovisionai.cloud  -> this site (Traefik/TLS)
+#   http://<VPS_IP>:47850                -> this site (direct, no TLS)
+
+services:
+  guardian-site:
+    build: .
+    container_name: guardian-site
+    restart: unless-stopped
+    networks:
+      - traefik-proxy
+    ports:
+      - "47850:8080"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=traefik-proxy
+      - traefik.http.routers.guardian-site.rule=Host(`guardian.halovisionai.cloud`)
+      - traefik.http.routers.guardian-site.entrypoints=websecure
+      - traefik.http.routers.guardian-site.tls=true
+      - traefik.http.routers.guardian-site.tls.certresolver=letsencrypt
+      - traefik.http.services.guardian-site.loadbalancer.server.port=8080
+
+networks:
+  traefik-proxy:
+    external: true

@@ -1,0 +1,10 @@
+{
+  "name": "guardian-website",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Guardian marketing/download site — static server, zero dependencies.",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js"
+  }
+}

@@ -1,0 +1,5 @@
+node_modules/
+
+# Release binary (86MB) — same call as websites/sable: not in the repo,
+# copy it onto the VPS separately (scp) after `git clone`. See DEPLOY.md.
+public/downloads/*.exe
