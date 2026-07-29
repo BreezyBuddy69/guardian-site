@@ -18,10 +18,8 @@ this live.
 
 - Docker + the `traefik-proxy` external network already exist. Verify:
   `docker network ls | grep traefik-proxy`.
-- DNS: `guardian.halovisionai.cloud` needs to resolve to the VPS. If you
-  already have a wildcard `*.halovisionai.cloud` A record (likely, given
-  the other `*.halovisionai.cloud` sites), this just works with no new
-  DNS entry.
+- DNS: nothing to do — the site hangs under the existing
+  `halovisionai.cloud` on the path `/guardian`, same as `/riff`.
 
 ## 2. Get the code onto the server
 
@@ -48,8 +46,13 @@ docker compose ps        # "healthy" within ~15s
 ```
 
 Reachable at:
-- `https://guardian.halovisionai.cloud` (Traefik/TLS)
-- `http://<VPS_IP>:47850` (direct, no TLS — useful before DNS/Traefik works)
+- `https://halovisionai.cloud/guardian/` (Traefik/TLS)
+- `http://<VPS_IP>:47850` (direct, no TLS — useful before Traefik works)
+
+`/guardian` ohne Slash wird von Traefik auf `/guardian/` umgeleitet, danach
+strippt die Middleware das Präfix wieder weg — der Container sieht `/`.
+Deshalb müssen alle Asset-Pfade in `public/index.html` relativ bleiben
+(`style.css`, nicht `/style.css`).
 
 Port `47850` was picked to avoid every other port already in use in this
 repo (47821/47831-34/47842, 8082 — see the other sites' `docker-compose*.yml`).
