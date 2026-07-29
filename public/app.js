@@ -13,14 +13,16 @@ const io = new IntersectionObserver(
 document.querySelectorAll(".reveal").forEach((el) => io.observe(el));
 
 // ── Hero dither ──────────────────────────────────────────────────────────
-// Animated, mouse-reactive ordered-dither FLOWERS replacing the static hero
-// glow. Plain WebGL (no library) — a full-screen triangle + fragment shader
-// drawing rose-curve petal shapes (signed-distance-ish, not a noise field),
-// quantized through a hardcoded 4x4 Bayer matrix so the petal edges read as
-// a proper dithered/halftone silhouette. Two flowers drift ambiently, a
-// third tracks the cursor. Degrades gracefully: if WebGL isn't available the
-// static .hero-glow CSS gradient stays visible (untouched), and
-// prefers-reduced-motion hides the canvas via CSS.
+// Animated, mouse-reactive dithered ink/smoke cloud replacing the static
+// hero glow (the "viral dithering effect" look — domain-warped fractal
+// noise standing in for the AI-generated smoke plate + video pass, since
+// this is plain WebGL with zero external assets/services). A full-screen
+// triangle + fragment shader: fbm noise warped through itself (Quilez's
+// classic "warp" pattern) for a convincing ink-in-water look, quantized
+// through a hardcoded 4x4 Bayer matrix for the dithered/halftone edge, with
+// a swirl that follows the cursor. Degrades gracefully: if WebGL isn't
+// available the static .hero-glow CSS gradient stays visible (untouched),
+// and prefers-reduced-motion hides the canvas via CSS.
 (function initHeroDither() {
   const canvas = document.getElementById("ditherCanvas");
   const heroEl = canvas && canvas.closest(".hero");
@@ -66,18 +68,37 @@ document.querySelectorAll(".reveal").forEach((el) => io.observe(el));
       return 5.0 / 16.0; // idx == 15
     }
 
-    // Rounded rose-curve petal silhouette: soft 0..1 mask, 1 deep inside the
-    // flower, smooth falloff to 0 at the petal edge. "petals" controls lobe
-    // count, "rot" spins it, "wob" softly breathes the size (never a static
-    // drawing). The 0.82 floor keeps a small round core so it never pinches
-    // to a bare point between petals.
-    float flower(vec2 p, vec2 center, float radius, float petals, float rot, float wob) {
-      vec2 q = p - center;
-      float d = length(q);
-      float a = atan(q.y, q.x);
-      float lobe = pow(max(cos(petals * (a - rot)), 0.0), 0.55);
-      float shapeR = radius * wob * (0.4 + 0.6 * lobe);
-      return 1.0 - smoothstep(shapeR * 0.8, shapeR, d);
+    // Value noise + fbm (fractal Brownian motion) — the standard cheap
+    // texture-free stand-in for Perlin noise in a portable GLSL1 shader.
+    float hash(vec2 p) {
+      p = fract(p * vec2(123.34, 456.21));
+      p += dot(p, p + 45.32);
+      return fract(p.x * p.y);
+    }
+    float noise(vec2 p) {
+      vec2 i = floor(p), f = fract(p);
+      float a = hash(i), b = hash(i + vec2(1.0, 0.0));
+      float c = hash(i + vec2(0.0, 1.0)), d = hash(i + vec2(1.0, 1.0));
+      vec2 u = f * f * (3.0 - 2.0 * f);
+      return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+    }
+    float fbm(vec2 p) {
+      float v = 0.0, amp = 0.5;
+      for (int i = 0; i < 5; i++) {
+        v += amp * noise(p);
+        p *= 2.02;
+        amp *= 0.5;
+      }
+      return v;
+    }
+    // Domain-warped fbm (Quilez's "warp" pattern): feeding fbm's own output
+    // back in as a coordinate offset is what turns generic noise into
+    // convincing ink-in-water / smoke — without it you just get clouds.
+    float ink(vec2 p, float t) {
+      vec2 q = vec2(fbm(p + vec2(0.0, 0.0) + t * 0.05), fbm(p + vec2(5.2, 1.3) - t * 0.04));
+      vec2 r = vec2(fbm(p + 4.0 * q + vec2(1.7, 9.2) + t * 0.035),
+                     fbm(p + 4.0 * q + vec2(8.3, 2.8) - t * 0.025));
+      return fbm(p + 4.0 * r);
     }
 
     void main() {
@@ -86,29 +107,35 @@ document.querySelectorAll(".reveal").forEach((el) => io.observe(el));
       float aspect = u_resolution.x / u_resolution.y;
       vec2 mp = u_mouse / u_resolution.y;
 
-      float t = u_time;
-      float wob = 1.0;
+      // Cursor swirl: rotate sample points around the mouse, falling off
+      // with distance — the ink visibly stirs where you move the pointer,
+      // instead of just a brightness ripple.
+      vec2 toMouse = p - mp;
+      float distM = length(toMouse);
+      float swirl = exp(-distM * 1.4) * 2.2;
+      float s = sin(swirl), c = cos(swirl);
+      vec2 warped = mat2(c, -s, s, c) * toMouse + mp;
 
-      // Two ambient flowers drifting slowly on either side, one flower that
-      // follows the cursor (the "interactive" one) — never dead-centered
-      // behind the headline.
-      float f1 = flower(p, vec2(aspect * 0.14, 0.78) + 0.04 * vec2(sin(t * 0.17), cos(t * 0.13)),
-                         0.30, 6.0, t * 0.22, 0.94 + 0.06 * sin(t * 0.6));
-      float f2 = flower(p, vec2(aspect * 0.88, 0.62) + 0.05 * vec2(cos(t * 0.15), sin(t * 0.11)),
-                         0.36, 5.0, -t * 0.18, 0.94 + 0.06 * sin(t * 0.5 + 1.7));
-      float f3 = flower(p, mp, 0.22, 7.0, t * 0.7, 1.0);
+      float v = ink(warped * 1.6 + vec2(2.0, 0.0), u_time);
+      v = smoothstep(0.32, 0.72, v); // punch up contrast so it reads as a bold blob, not a haze
 
-      float mask = max(max(f1, f2), f3);
+      // Mild top-weighted falloff — present but gentle, this is meant to
+      // fill most of the hero the way the reference does, not fade to a
+      // thin band.
+      float vfade = pow(clamp(uv.y, 0.0, 1.0), 0.28);
 
-      // Gentle inner shimmer so petals aren't flat-filled, just textured.
-      float shimmer = 0.8 + 0.2 * sin(p.x * 6.0 + t) * sin(p.y * 6.0 - t * 0.8);
-      float n = mask * shimmer;
+      // Soft elliptical "clear zone" behind the centered headline/copy
+      // column: the reference keeps its ink blob off to the side of the
+      // text, not under it. Bold at the edges, backed way off in the
+      // middle — never a hard cutout, just enough to keep the copy legible.
+      vec2 dd = (uv - vec2(0.5, 0.5));
+      dd.x /= 0.34;
+      dd.y /= 0.56;
+      float clearMask = smoothstep(0.6, 1.15, length(dd));
+      float centerAtten = mix(0.1, 1.0, clearMask);
 
-      // Top-weighted falloff so this reads as a hero glow, not a solid block.
-      float vfade = pow(clamp(uv.y, 0.0, 1.0), 0.55);
-
-      float on = step(bayer4x4(gl_FragCoord.xy), n);
-      float alpha = on * vfade * 0.42;
+      float on = step(bayer4x4(gl_FragCoord.xy), v);
+      float alpha = on * vfade * centerAtten * 0.88;
       gl_FragColor = vec4(u_color, alpha);
     }
   `;
@@ -152,7 +179,7 @@ document.querySelectorAll(".reveal").forEach((el) => io.observe(el));
   const u_time = gl.getUniformLocation(program, "u_time");
   const u_mouse = gl.getUniformLocation(program, "u_mouse");
   const u_color = gl.getUniformLocation(program, "u_color");
-  gl.uniform3f(u_color, 217 / 255, 119 / 255, 87 / 255); // --accent #D97757
+  gl.uniform3f(u_color, 108 / 255, 92 / 255, 196 / 255); // rich violet — the reference's "ink" color, distinct from the orange UI accent
 
   let mouseX = 0, mouseY = 0, haveMouse = false;
   let running = document.visibilityState === "visible";
