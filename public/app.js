@@ -12,21 +12,25 @@ const io = new IntersectionObserver(
 
 document.querySelectorAll(".reveal").forEach((el) => io.observe(el));
 
-// ── Hero dither ──────────────────────────────────────────────────────────
+// ── Ink dither ───────────────────────────────────────────────────────────
 // Animated, mouse-reactive dithered ink/smoke cloud replacing the static
-// hero glow (the "viral dithering effect" look — domain-warped fractal
+// section glows (the "viral dithering effect" look — domain-warped fractal
 // noise standing in for the AI-generated smoke plate + video pass, since
 // this is plain WebGL with zero external assets/services). A full-screen
 // triangle + fragment shader: fbm noise warped through itself (Quilez's
 // classic "warp" pattern) for a convincing ink-in-water look, quantized
 // through a hardcoded 4x4 Bayer matrix for the dithered/halftone edge, with
 // a swirl that follows the cursor. Degrades gracefully: if WebGL isn't
-// available the static .hero-glow CSS gradient stays visible (untouched),
-// and prefers-reduced-motion hides the canvas via CSS.
-(function initHeroDither() {
-  const canvas = document.getElementById("ditherCanvas");
-  const heroEl = canvas && canvas.closest(".hero");
-  if (!canvas || !heroEl) return;
+// available the static glow CSS gradients stay visible (untouched), and
+// prefers-reduced-motion skips the canvases entirely.
+//
+// Reused on both the hero (needs a clear zone behind the centered copy) and
+// the download section (its card is already a solid-ish surface, so no
+// clear zone needed — u_clearStrength just goes to 0 there).
+function createInkDither(canvasId, { clearStrength = 1.0 } = {}) {
+  const canvas = document.getElementById(canvasId);
+  const containerEl = canvas && canvas.parentElement;
+  if (!canvas || !containerEl) return;
   if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
 
   const gl = canvas.getContext("webgl", { alpha: true, premultipliedAlpha: false });
@@ -42,6 +46,7 @@ document.querySelectorAll(".reveal").forEach((el) => io.observe(el));
     uniform float u_time;
     uniform vec2 u_mouse;
     uniform vec3 u_color;
+    uniform float u_clearStrength;
 
     // 4x4 Bayer threshold matrix, hardcoded as an if-ladder — WebGL1/GLSL ES
     // 1.00 disallows dynamic array indexing by a non-constant int reliably
@@ -128,11 +133,13 @@ document.querySelectorAll(".reveal").forEach((el) => io.observe(el));
       // column: the reference keeps its ink blob off to the side of the
       // text, not under it. Bold at the edges, backed way off in the
       // middle — never a hard cutout, just enough to keep the copy legible.
+      // u_clearStrength lets a caller with its own opaque card (download
+      // section) skip this entirely instead of tuning a second ellipse.
       vec2 dd = (uv - vec2(0.5, 0.5));
       dd.x /= 0.34;
       dd.y /= 0.56;
       float clearMask = smoothstep(0.6, 1.15, length(dd));
-      float centerAtten = mix(0.1, 1.0, clearMask);
+      float centerAtten = mix(1.0, mix(0.1, 1.0, clearMask), u_clearStrength);
 
       float on = step(bayer4x4(gl_FragCoord.xy), v);
       float alpha = on * vfade * centerAtten * 0.88;
@@ -179,13 +186,15 @@ document.querySelectorAll(".reveal").forEach((el) => io.observe(el));
   const u_time = gl.getUniformLocation(program, "u_time");
   const u_mouse = gl.getUniformLocation(program, "u_mouse");
   const u_color = gl.getUniformLocation(program, "u_color");
+  const u_clearStrength = gl.getUniformLocation(program, "u_clearStrength");
   gl.uniform3f(u_color, 108 / 255, 92 / 255, 196 / 255); // rich violet — the reference's "ink" color, distinct from the orange UI accent
+  gl.uniform1f(u_clearStrength, clearStrength);
 
   let mouseX = 0, mouseY = 0, haveMouse = false;
   let running = document.visibilityState === "visible";
 
   function resize() {
-    const rect = heroEl.getBoundingClientRect();
+    const rect = containerEl.getBoundingClientRect();
     const dpr = Math.min(window.devicePixelRatio || 1, 1.5); // dot pattern reads fine below native DPR — keeps GPU cost down
     canvas.width = Math.max(1, Math.round(rect.width * dpr));
     canvas.height = Math.max(1, Math.round(rect.height * dpr));
@@ -194,7 +203,7 @@ document.querySelectorAll(".reveal").forEach((el) => io.observe(el));
   resize();
   window.addEventListener("resize", resize);
 
-  heroEl.addEventListener("pointermove", (e) => {
+  containerEl.addEventListener("pointermove", (e) => {
     const rect = canvas.getBoundingClientRect();
     const dpr = canvas.width / rect.width;
     mouseX = (e.clientX - rect.left) * dpr;
@@ -212,7 +221,7 @@ document.querySelectorAll(".reveal").forEach((el) => io.observe(el));
     if (!running) return;
     const t = (now - start) / 1000;
     // Gentle idle drift for the ripple center before the cursor ever enters
-    // the hero — ambient motion instead of a dead spot mid-canvas.
+    // the section — ambient motion instead of a dead spot mid-canvas.
     const mx = haveMouse ? mouseX : canvas.width * (0.5 + 0.15 * Math.sin(t * 0.3));
     const my = haveMouse ? mouseY : canvas.height * (0.6 + 0.1 * Math.cos(t * 0.25));
     gl.uniform2f(u_resolution, canvas.width, canvas.height);
@@ -222,5 +231,8 @@ document.querySelectorAll(".reveal").forEach((el) => io.observe(el));
   }
   requestAnimationFrame(frame);
 
-  heroEl.classList.add("has-dither");
-})();
+  containerEl.classList.add("has-dither");
+}
+
+createInkDither("ditherCanvas", { clearStrength: 1.0 });
+createInkDither("downloadDitherCanvas", { clearStrength: 0.0 });
